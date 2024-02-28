@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+
+read -r -d '' libs_list <<EOF
+$HOME/.m2/repository/com/github/samtools/htsjdk/2.6.1/htsjdk-2.6.1.jar
+$HOME/.m2/repository/commons-cli/commons-cli/1.3.1/commons-cli-1.3.1.jar
+$HOME/.m2/repository/org/apache/commons/commons-lang3/3.4/commons-lang3-3.4.jar
+$HOME/.m2/repository/com/google/guava/guava/19.0/guava-19.0.jar
+$HOME/.m2/repository/junit/junit/4.12/junit-4.12.jar
+$HOME/.m2/repository/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar
+EOF
+
+libs=$(echo "${libs_list}" | tr "\n" ":")
+
+dedup_jar=$(find * -maxdepth 1 | grep "\.jar"$ | head -n 1)
+
+results_dir="test-results"
+igv_batch_file="${results_dir}/igv_commands.bat"
+
+rm ${igv_batch_file}
+rm ${results_dir}/*.bam
+rm ${results_dir}/*.hist
+rm ${results_dir}/*.log
+rm ${results_dir}/*.bam.bai
+rm ${results_dir}/*.png
+
+test_bam_dir="src/test/resources"
+#test_bams=$(find ${test_bam_dir} | grep "\.bam"$)
+test_bams=$(find ${test_bam_dir} | grep "\.bam"$ | grep "reverse_merged")
+igv_genome="${test_bam_dir}/ParatyphiC.fasta"
+igv_pad=100
+
+for test_bam in $test_bams
+do
+	echo "Running DeDup for ${test_bam}"
+	java -cp ${libs}${dedup_jar} main.java.RMDupper -i ${test_bam} -o ${results_dir}
+	test_result_prefix=$(echo "${test_bam}" | results_dir=${results_dir} awk '{split($1,pdata,"/");split(pdata[length(pdata)],fndata,".");fnprefix="";for (i = 1; i < length(fndata); i++) { fnprefix=fnprefix""fndata[i]; };print ENVIRON["results_dir"]"/"fnprefix"_rmdup";}')
+	test_result_bam="${test_result_prefix}.bam"
+	test_result_png="${test_result_prefix}.png"
+	echo "test_result_bam '${test_result_bam}'"
+	samtools index ${test_bam}
+	samtools index ${test_result_bam}
+
+	chromosome="gi|224581838|ref|NC_012125.1|"
+	position="2416055"
+	region_start=$((${position}-${igv_pad}))
+	region_end=$((${position}+${igv_pad}))
+
+	rm ${igv_batch_file}
+	echo "new" >> ${igv_batch_file} 
+	echo "genome ${igv_genome}" >> ${igv_batch_file}
+	echo "load ${test_bam}" >> ${igv_batch_file}
+	echo "load ${test_result_bam}" >> ${igv_batch_file}
+	echo "goto ${chromosome} ${region_start} ${region_end}" >> ${igv_batch_file}
+	echo "sort position" >> ${igv_batch_file}
+	echo "snapshot ${test_result_png}" >> ${igv_batch_file}
+	echo "exit" >> ${igv_batch_file}
+
+	echo "igv -g ${test_bam_dir}/${igv_genome}.fasta -b ${igv_batch_file}"
+	igv -b ${igv_batch_file}
+done
+
+rm ${test_bam_dir}/*.bam.bai
+
